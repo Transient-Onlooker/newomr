@@ -16,11 +16,11 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
       {/* Header Stats */}
       <div className="bg-white rounded-xl shadow p-6 flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Grading Complete</h2>
-          <p className="text-slate-500">Review the OMR analysis below.</p>
+          <h2 className="text-2xl font-bold text-slate-800">채점 완료</h2>
+          <p className="text-slate-500">아래의 OMR 분석 결과를 확인하세요.</p>
         </div>
         <div className="text-center bg-blue-50 px-8 py-4 rounded-lg border border-blue-100">
-          <div className="text-sm text-blue-600 uppercase font-semibold tracking-wider">Total Score</div>
+          <div className="text-sm text-blue-600 uppercase font-semibold tracking-wider">총점</div>
           <div className="text-4xl font-extrabold text-blue-700">
             {result.totalScore} <span className="text-2xl text-blue-400">/ {result.maxScore}</span>
           </div>
@@ -30,7 +30,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
       {/* Identity Section */}
       {identityGroups.length > 0 && (
         <div className="bg-white rounded-xl shadow p-6">
-          <h3 className="text-lg font-semibold text-slate-700 mb-4 border-b pb-2">Student Information</h3>
+          <h3 className="text-lg font-semibold text-slate-700 mb-4 border-b pb-2">수험자 정보</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {identityGroups.map(group => {
                // Error if not exactly 1 mark
@@ -43,7 +43,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
                           <>
                              <AlertTriangle size={20} />
                              <span className="text-base font-bold">
-                                {group.markedValues.length === 0 ? "ERROR (Empty)" : "ERROR (Multiple)"}
+                                {group.markedValues.length === 0 ? "오류 (미기입)" : "오류 (중복 마킹)"}
                              </span>
                           </>
                       ) : (
@@ -59,16 +59,16 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
 
       {/* Questions Table */}
       <div className="bg-white rounded-xl shadow overflow-hidden">
-        <h3 className="text-lg font-semibold text-slate-700 p-6 border-b">Detailed Answers</h3>
+        <h3 className="text-lg font-semibold text-slate-700 p-6 border-b">상세 정답 확인</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 text-slate-500 text-sm uppercase">
-                <th className="p-4 font-semibold">Q#</th>
-                <th className="p-4 font-semibold">Marked Answer</th>
-                <th className="p-4 font-semibold">Correct Answer</th>
-                <th className="p-4 font-semibold text-center">Result</th>
-                <th className="p-4 font-semibold text-right">Points</th>
+                <th className="p-4 font-semibold">문항</th>
+                <th className="p-4 font-semibold">마킹한 답</th>
+                <th className="p-4 font-semibold">정답</th>
+                <th className="p-4 font-semibold text-center">결과</th>
+                <th className="p-4 font-semibold text-right">배점</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -91,7 +91,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
                             </span>
                           ))
                         ) : (
-                          <span className="text-slate-400 italic">No mark</span>
+                          <span className="text-slate-400 italic">미기입</span>
                         )}
                       </div>
                     </td>
@@ -116,7 +116,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
                           <XCircle className="w-6 h-6 text-red-500 mx-auto" />
                         )
                       ) : (
-                        <MinusCircle className="w-6 h-6 text-gray-300 mx-auto" title="Not Graded" />
+                        <MinusCircle className="w-6 h-6 text-gray-300 mx-auto" title="채점 대상 아님" />
                       )}
                     </td>
                     <td className="p-4 text-right font-mono font-medium">
@@ -135,7 +135,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ result, onReset }) => {
           onClick={onReset}
           className="px-6 py-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-lg shadow-sm transition-all"
         >
-          Grade Another Sheet
+          다른 시트 채점하기
         </button>
       </div>
     </div>

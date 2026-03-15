@@ -43,4 +43,10 @@ export interface GradingResult {
   groups: GradedGroup[];
   imageUrl: string;
   fileName?: string;
+  debugMarkers?: {
+    tl?: Point;
+    tr?: Point;
+    br?: Point;
+    bl?: Point;
+  };
 }

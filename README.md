@@ -1,16 +1,52 @@
-# React + Vite
+# 🎯 스마트 OMR 채점기 (Smart OMR Grader)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+웹 브라우저에서 별도의 서버나 외부 라이브러리(OpenCV 등) 없이 작동하는 **고성능 OMR 자동 채점 솔루션**입니다. 순수 HTML5 Canvas API와 알고리즘만으로 구현되어 가볍고 강력합니다.
 
-Currently, two official plugins are available:
+## 🚀 주요 기능
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **3점 마커 기반 자동 정렬**: OMR 카드의 3개 모서리 마커(TL, TR, BR)를 감지하여 이미지의 방향과 기울기를 자동으로 보정합니다.
+- **정밀 어핀 변환 (Affine Warp)**: 이미지가 비뚤어지거나 회전되어 있어도 수학적 변환을 통해 표준 A4 가로 규격(**1414x1000px**)으로 정규화합니다.
+- **BFS 기반 노이즈 필터링**: 단순 픽셀 탐색이 아닌 BFS(너비 우선 탐색) Blob 알고리즘을 사용하여 글씨나 노이즈를 무시하고 실제 마커만 정확히 찾아냅니다.
+- **Red Dropout**: 빨간색 가이드 라인이나 텍스트를 무시하고 검은색 마킹만 정확하게 인식합니다.
+- **디버그 모드**: 마커 인식 위치를 실시간으로 시각화하여 시스템의 작동 상태를 즉시 확인할 수 있습니다.
+- **그리드 매핑 툴**: 문항 수와 보기 개수에 맞춰 드래그 한 번으로 수십 개의 문항을 순식간에 배치할 수 있습니다.
 
-## React Compiler
+## 🛠 기술 스택
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Frontend**: React 19, TypeScript, Vite 6
+- **Styling**: Tailwind CSS v4
+- **Engine**: Pure HTML5 Canvas API (No external CV library)
+- **Icons**: Lucide React
 
-## Expanding the ESLint configuration
+## 📦 핵심 엔진 (`OmrEngine`)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+이 프로젝트의 심장부인 `src/utils/omrEngine.ts`는 다음과 같은 처리를 수행합니다.
+
+1.  **Image Loading**: 브라우저 메모리에 이미지를 로드합니다.
+2.  **Binarization**: 채점 및 마커 탐색을 위해 최적화된 임계값으로 이진화를 수행합니다.
+3.  **Marker Detection**: 4개 모서리 영역에서 BFS 알고리즘을 통해 마커를 탐색하고, 밀도(Solidity)와 형태(Aspect Ratio)를 검사하여 가짜 마커를 걸러냅니다.
+4.  **Perspective Correction**: 발견된 마커를 기준으로 이미지를 반듯하게 펴고 1414x1000 해상도로 정규화합니다.
+5.  **Grading**: 정규화된 좌표계에서 각 버블의 검은색 픽셀 점유율을 계산하여 마킹 여부를 판별합니다.
+
+## 📖 사용 방법
+
+### 1. 템플릿 설정 (Mapping)
+- OMR 카드 원본 이미지를 업로드합니다.
+- 그리드 툴을 사용하여 정답 칸의 위치를 지정합니다.
+- 설정값을 JSON으로 내보내거나 브라우저에 저장합니다.
+
+### 2. 채점 (Grading)
+- 학생들이 마킹한 답안지 사진이나 스캔본을 업로드합니다.
+- 시스템이 자동으로 마커를 찾아 정렬합니다.
+- `채점 시작` 버튼을 누르면 실시간으로 점수와 오답이 계산됩니다.
+
+## 🤝 엔진 공유 (For Developers)
+
+`OmrEngine` 로직만 따로 사용하고 싶다면 다음 파일들을 참조하세요.
+- `src/utils/omrEngine.ts`: 이미지 처리 및 채점 핵심 로직
+- `src/types.ts`: 엔진에서 사용하는 인터페이스 정의
+
+이 엔진은 외부 의존성이 없으므로 TypeScript 환경이라면 어디든 복사해서 즉시 사용할 수 있습니다.
+
+---
+**스마트 OMR 채점기** - 정확하고 빠른 웹 기반 채점 경험을 제공합니다.

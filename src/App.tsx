@@ -4,6 +4,7 @@ import MappingCanvas from './components/MappingCanvas';
 import ResultsView from './components/ResultsView';
 import { AlignmentEditor } from './components/AlignmentEditor';
 import { OmrTemplate, BubbleGroup, Bubble, GradingResult } from './types';
+import { OmrEngine } from './utils/omrEngine';
 
 // Initial Empty Template
 const initialTemplate: OmrTemplate = {
@@ -19,8 +20,12 @@ export default function App() {
   const [template, setTemplate] = useState<OmrTemplate>(initialTemplate);
 
   const [filledImage, setFilledImage] = useState<string | null>(null);
+  const [originalFilledImage, setOriginalFilledImage] = useState<string | null>(null);
   const [filledFileName, setFilledFileName] = useState<string | undefined>(undefined);
   const [result, setResult] = useState<GradingResult | null>(null);
+  const [isGrading, setIsGrading] = useState(false);
+  const [isDebugMode, setIsDebugMode] = useState(false);
+  const [detectedMarkers, setDetectedMarkers] = useState<{tl?: Point, tr?: Point, br?: Point, bl?: Point} | null>(null);
 
   // Alignment State
   const [rawImageForAlignment, setRawImageForAlignment] = useState<string | null>(null);
@@ -39,27 +44,88 @@ export default function App() {
   const [isEditingRadius, setIsEditingRadius] = useState(false);
   const [isEditingThreshold, setIsEditingThreshold] = useState(false);
 
+  // History State for Undo/Redo
+  const [undoStack, setUndoStack] = useState<BubbleGroup[][]>([]);
+  const [redoStack, setRedoStack] = useState<BubbleGroup[][]>([]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const batchInputRef = useRef<HTMLInputElement>(null);
+
+  // --- History Management ---
+  const saveHistory = useCallback(() => {
+    setUndoStack(prev => [...prev, JSON.parse(JSON.stringify(template.groups))]);
+    setRedoStack([]); // New action clears redo stack
+  }, [template.groups]);
+
+  const undo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    const current = JSON.parse(JSON.stringify(template.groups));
+    
+    setRedoStack(prev => [...prev, current]);
+    setUndoStack(prev => prev.slice(0, -1));
+    setTemplate(prev => ({ ...prev, groups: previous }));
+  }, [undoStack, template.groups]);
+
+  const redo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    const current = JSON.parse(JSON.stringify(template.groups));
+
+    setUndoStack(prev => [...prev, current]);
+    setRedoStack(prev => prev.slice(0, -1));
+    setTemplate(prev => ({ ...prev, groups: next }));
+  }, [redoStack, template.groups]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z') {
+          e.preventDefault();
+          undo();
+        } else if (e.key === 'y') {
+          e.preventDefault();
+          redo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
+
   // Grid Generator State
   const [isGridMode, setIsGridMode] = useState(false);
   const [gridPoints, setGridPoints] = useState<{x:number, y:number}[]>([]);
   const [gridStartNo, setGridStartNo] = useState(1);
-  const [gridCount, setGridCount] = useState(5);
+  const [gridRows, setGridRows] = useState(20);
+  const [gridCols, setGridCols] = useState(1);
   const [gridOptions, setGridOptions] = useState("1,2,3,4,5");
-  const [gridDirection, setGridDirection] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [gridDirection, setGridDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [gridType, setGridType] = useState<'question' | 'identity'>('question');
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const batchInputRef = useRef<HTMLInputElement>(null);
 
   // --- Handlers ---
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const imageUrl = event.target?.result as string;
-        setTemplate(prev => ({ ...prev, imageUrl }));
-        setStep('mapping');
+        setIsGrading(true); // 로딩 표시 활용
+        try {
+          const engine = new OmrEngine();
+          // 정렬된 이미지를 가져옴 (gradeSheet 대신 내부 정렬 로직 활용을 위해 
+          // 임시로 빈 템플릿으로 gradeSheet 호출하여 정렬된 이미지만 추출)
+          const result = await engine.gradeSheet(imageUrl, { ...initialTemplate, groups: [] });
+          setTemplate(prev => ({ ...prev, imageUrl: result.imageUrl }));
+          setStep('mapping');
+        } catch (error) {
+          console.error("Template alignment failed:", error);
+          setTemplate(prev => ({ ...prev, imageUrl }));
+          setStep('mapping');
+        } finally {
+          setIsGrading(false);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -70,9 +136,25 @@ export default function App() {
     if (file) {
       setFilledFileName(file.name);
       const reader = new FileReader();
-      reader.onload = (event) => {
-        setFilledImage(event.target?.result as string);
-        setStep('grading');
+      reader.onload = async (event) => {
+        const url = event.target?.result as string;
+        setIsGrading(true); // 정렬 중 로딩 표시
+        try {
+          const engine = new OmrEngine();
+          // 채점 로직의 정렬 부분만 활용하기 위해 빈 템플릿으로 호출
+          const aligned = await engine.gradeSheet(url, { ...initialTemplate, groups: [] });
+          setFilledImage(aligned.imageUrl);
+          setOriginalFilledImage(aligned.imageUrl); // 잘린 상태를 원본으로 간주
+          setStep('grading');
+          setIsDebugMode(false);
+        } catch (error) {
+          console.error("Filled sheet alignment failed:", error);
+          setFilledImage(url);
+          setOriginalFilledImage(url);
+          setStep('grading');
+        } finally {
+          setIsGrading(false);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -92,6 +174,7 @@ export default function App() {
 
   const addGroup = () => {
     if (!newGroupLabel) return;
+    saveHistory();
     const newGroup: BubbleGroup = {
       id: crypto.randomUUID(),
       label: newGroupLabel,
@@ -119,6 +202,7 @@ export default function App() {
   };
 
   const deleteGroup = (id: string) => {
+      saveHistory();
       setTemplate(prev => ({
           ...prev,
           groups: prev.groups.filter(g => g.id !== id)
@@ -128,12 +212,14 @@ export default function App() {
 
   const handleClearAll = () => {
     if (template.groups.length === 0) return;
+    saveHistory();
     setTemplate(prev => ({ ...prev, groups: [] }));
     setActiveGroupId(null);
     setEditingGroup(null);
   };
 
   const handleAddBubble = (groupId: string, bubble: Bubble) => {
+    saveHistory();
     const groupIndex = template.groups.findIndex(g => g.id === groupId);
     if (groupIndex === -1) return;
     const group = template.groups[groupIndex];
@@ -150,6 +236,7 @@ export default function App() {
   };
 
   const handleUpdateBubble = (groupId: string, bubbleIndex: number, newBubble: Bubble) => {
+      saveHistory();
       const groupIndex = template.groups.findIndex(g => g.id === groupId);
       if (groupIndex === -1) return;
       const group = template.groups[groupIndex];
@@ -161,6 +248,7 @@ export default function App() {
   };
 
   const handleDeleteBubble = (groupId: string, bubbleIndex: number) => {
+    saveHistory();
     const groupIndex = template.groups.findIndex(g => g.id === groupId);
     if (groupIndex === -1) return;
     const group = template.groups[groupIndex];
@@ -178,59 +266,83 @@ export default function App() {
   };
 
   const handleGridClick = (x: number, y: number) => {
-    const newPoints = [...gridPoints, { x, y }];
-    setGridPoints(newPoints);
-    if (newPoints.length === 2) {
-      generateGrid(newPoints[0], newPoints[1]);
-      setIsGridMode(false);
-      setGridPoints([]);
-    }
+    setGridPoints(prev => {
+      const next = [...prev, { x, y }];
+      if (next.length === 2) {
+        // 상태 업데이트 후 실행되도록 setTimeout 사용
+        setTimeout(() => {
+          generateGrid(next[0], next[1]);
+          setIsGridMode(false);
+          setGridPoints([]);
+        }, 0);
+      }
+      return next;
+    });
   };
 
   const generateGrid = (p1: {x:number, y:number}, p2: {x:number, y:number}) => {
     const options = gridOptions.split(',').map(s => s.trim()).filter(s => s);
     if (options.length === 0) return;
+    saveHistory();
+    
     const newGroups: BubbleGroup[] = [];
-    const isHorizontal = gridDirection === 'horizontal';
-    const numGroups = gridCount;
+    const numRows = gridRows;
+    const numCols = gridCols;
     const numBubblesPerGroup = options.length;
+
     const minX = Math.min(p1.x, p2.x);
     const maxX = Math.max(p1.x, p2.x);
     const minY = Math.min(p1.y, p2.y);
     const maxY = Math.max(p1.y, p2.y);
-    const groupStepX = isHorizontal ? 0 : (numGroups > 1 ? (maxX - minX) / (numGroups - 1) : 0);
-    const groupStepY = isHorizontal ? (numGroups > 1 ? (maxY - minY) / (numGroups - 1) : 0) : 0;
-    const bubbleStepX = isHorizontal ? (numBubblesPerGroup > 1 ? (maxX - minX) / (numBubblesPerGroup - 1) : 0) : 0;
-    const bubbleStepY = isHorizontal ? 0 : (numBubblesPerGroup > 1 ? (maxY - minY) / (numBubblesPerGroup - 1) : 0);
 
-    for (let g = 0; g < numGroups; g++) {
-      const groupBubbles: Bubble[] = [];
-      const currentLabel = (gridStartNo + g).toString();
-      const groupOriginX = isHorizontal ? minX : minX + (g * groupStepX);
-      const groupOriginY = isHorizontal ? minY + (g * groupStepY) : minY;
-      for (let b = 0; b < numBubblesPerGroup; b++) {
-        const bx = groupOriginX + (b * bubbleStepX);
-        const by = groupOriginY + (b * bubbleStepY);
-        groupBubbles.push({
-          value: options[b],
-          x: bx,
-          y: by
+    const totalW = maxX - minX;
+    const totalH = maxY - minY;
+
+    // 열(Column) 하나의 너비
+    const colWidth = numCols > 1 ? totalW / (numCols - 1 + 0.5) : totalW;
+    // 행(Row) 하나의 높이
+    const rowStep = numRows > 1 ? totalH / (numRows - 1) : 0;
+    const colStep = numCols > 1 ? totalW / (numCols - 1) : 0;
+
+    // 문항 내 버블 간격 (문항 너비의 90%를 사용)
+    const bubbleAreaW = numCols > 1 ? (colWidth * 0.8) : totalW;
+    const bubbleStepX = numBubblesPerGroup > 1 ? bubbleAreaW / (numBubblesPerGroup - 1) : 0;
+
+    let count = 0;
+    for (let r = 0; r < numRows; r++) {
+      for (let c = 0; c < numCols; c++) {
+        const groupBubbles: Bubble[] = [];
+        const currentLabel = (gridStartNo + count).toString();
+        
+        // 문항의 시작점 (좌측 상단 버블 위치)
+        const gx = minX + (c * colStep);
+        const gy = minY + (r * rowStep);
+
+        for (let b = 0; b < numBubblesPerGroup; b++) {
+          groupBubbles.push({
+            value: options[b],
+            x: gx + (b * bubbleStepX),
+            y: gy
+          });
+        }
+
+        newGroups.push({
+          id: crypto.randomUUID(),
+          label: currentLabel,
+          type: gridType,
+          bubbles: groupBubbles,
+          points: gridType === 'question' ? newGroupPoints : undefined,
+          correctAnswer: gridType === 'question' ? [] : undefined
         });
+        count++;
       }
-      newGroups.push({
-        id: crypto.randomUUID(),
-        label: currentLabel,
-        type: gridType,
-        bubbles: groupBubbles,
-        points: undefined,
-        correctAnswer: gridType === 'question' ? [] : undefined
-      });
     }
+
     setTemplate(prev => ({
       ...prev,
       groups: [...prev.groups, ...newGroups]
     }));
-    setGridStartNo(prev => prev + numGroups);
+    setGridStartNo(prev => prev + (numRows * numCols));
   };
 
   const saveTemplate = () => {
@@ -345,10 +457,42 @@ export default function App() {
       e.target.value = '';
   };
 
+  // Debug: Auto-detect markers when image changes or debug mode is enabled
+  useEffect(() => {
+    const detect = async () => {
+      if (isDebugMode && originalFilledImage && step === 'grading') {
+        try {
+          const engine = new OmrEngine();
+          const res = await engine.gradeSheet(originalFilledImage, { ...initialTemplate, groups: [] }, undefined, true);
+          if (res.imageUrl) {
+             setFilledImage(res.imageUrl);
+          }
+        } catch (e) { console.error(e); }
+      } else if (!isDebugMode && originalFilledImage && step === 'grading') {
+         setFilledImage(originalFilledImage); // 복구
+      }
+    };
+    detect();
+  }, [isDebugMode, originalFilledImage, step]);
+
   const runGrading = async () => {
-    if (!filledImage) return;
-    // TODO: Implement your backend grading logic here
-    alert("Grading logic will be called here. Connect your backend engine.");
+    if (!originalFilledImage) return;
+    setIsGrading(true);
+    try {
+      const engine = new OmrEngine();
+      const gradingResult = await engine.gradeSheet(originalFilledImage, template, filledFileName, false);
+      
+      const newUrl = gradingResult.imageUrl;
+      setFilledImage(newUrl);
+      setOriginalFilledImage(newUrl); // 크롭된 상태를 유지
+      setResult(gradingResult);
+      setStep('results');
+    } catch (error) {
+      console.error("Grading failed:", error);
+      alert("채점 중 오류가 발생했습니다.");
+    } finally {
+      setIsGrading(false);
+    }
   };
 
   // --- Render Steps ---
@@ -363,8 +507,8 @@ export default function App() {
               <ScanEye size={24} />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">AutoOMR</h1>
-              <p className="text-xs text-gray-500">Open Source Grader</p>
+              <h1 className="text-xl font-bold text-gray-900">스마트 OMR 채점기</h1>
+              <p className="text-xs text-gray-500">오픈 소스 채점 도구</p>
             </div>
           </div>
           
@@ -372,6 +516,13 @@ export default function App() {
           <div className="flex items-center gap-2">
             {['upload_template', 'mapping', 'upload_filled', 'grading', 'results'].map((s, i) => {
               const steps = ['upload_template', 'mapping', 'upload_filled', 'grading', 'results'];
+              const stepLabels: Record<string, string> = {
+                'upload_template': '템플릿 업로드',
+                'mapping': '마킹 영역 설정',
+                'upload_filled': '답안지 업로드',
+                'grading': '채점 진행',
+                'results': '결과 확인'
+              };
               const currentIndex = steps.indexOf(step);
               const stepIndex = steps.indexOf(s);
               const isActive = step === s;
@@ -379,11 +530,14 @@ export default function App() {
               
               return (
                 <React.Fragment key={s}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                    isActive ? 'bg-blue-600 text-white' : 
-                    isCompleted ? 'bg-green-500 text-white' : 
-                    'bg-gray-200 text-gray-500'
-                  }`}>
+                  <div 
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+                      isActive ? 'bg-blue-600 text-white' : 
+                      isCompleted ? 'bg-green-500 text-white' : 
+                      'bg-gray-200 text-gray-500'
+                    }`}
+                    title={stepLabels[s]}
+                  >
                     {isCompleted ? <Check size={16} /> : i + 1}
                   </div>
                   {i < 4 && <ArrowRight size={16} className="text-gray-300" />}
@@ -403,12 +557,12 @@ export default function App() {
                 <Upload size={32} />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Upload Template</h2>
-                <p className="text-gray-500">Upload a blank OMR sheet to begin mapping.</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">템플릿 업로드</h2>
+                <p className="text-gray-500">매핑을 시작하려면 빈 OMR 시트를 업로드하세요.</p>
               </div>
               <label className="block w-full cursor-pointer">
                 <div className="w-full h-40 border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center hover:border-blue-500 transition-colors">
-                  <span className="text-gray-400 font-medium hover:text-blue-500">Select Image File</span>
+                  <span className="text-gray-400 font-medium hover:text-blue-500">이미지 파일 선택</span>
                 </div>
                 <input type="file" accept="image/*" onChange={handleTemplateUpload} className="hidden" />
               </label>
@@ -416,7 +570,7 @@ export default function App() {
                 onClick={() => fileInputRef.current?.click()}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
               >
-                Choose File
+                파일 선택
               </button>
             </div>
           </div>
@@ -426,10 +580,19 @@ export default function App() {
           <div className="space-y-4">
             {/* Toolbar */}
             <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-2 items-center justify-between">
-              <div className="flex gap-2 flex-wrap">
+              <div className="flex gap-2 flex-wrap items-center">
+                <button
+                  onClick={() => setStep('upload_template')}
+                  className="p-2 mr-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
+                  title="템플릿 업로드로 돌아가기"
+                >
+                  <ChevronLeft size={20} />
+                  <span className="text-sm font-medium">뒤로</span>
+                </button>
+                <div className="h-8 w-px bg-gray-200 mr-2"></div>
                 <input
                   type="text"
-                  placeholder="Group Label (e.g., Q1, ID)"
+                  placeholder="그룹 라벨 (예: Q1, ID)"
                   value={newGroupLabel}
                   onChange={(e) => setNewGroupLabel(e.target.value)}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-40"
@@ -439,21 +602,21 @@ export default function App() {
                   onChange={(e) => setNewGroupType(e.target.value as 'identity' | 'question')}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 >
-                  <option value="question">Question</option>
-                  <option value="identity">ID/Name</option>
+                  <option value="question">문항</option>
+                  <option value="identity">수험번호/성명</option>
                 </select>
                 {newGroupType === 'question' && (
                   <>
                     <input
                       type="number"
-                      placeholder="Points"
+                      placeholder="배점"
                       value={newGroupPoints}
                       onChange={(e) => setNewGroupPoints(parseInt(e.target.value) || 1)}
                       className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-20"
                     />
                     <input
                       type="text"
-                      placeholder="Correct (e.g., A,B,C)"
+                      placeholder="정답 (예: A,B,C)"
                       value={newGroupCorrect}
                       onChange={(e) => setNewGroupCorrect(e.target.value)}
                       className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-36"
@@ -461,29 +624,29 @@ export default function App() {
                   </>
                 )}
                 <button onClick={addGroup} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1">
-                  <Plus size={16} /> Add Group
+                  <Plus size={16} /> 그룹 추가
                 </button>
               </div>
               <div className="flex gap-2">
                 <button onClick={startGridTool} className={`px-4 py-2 rounded-lg border flex items-center gap-1 ${isGridMode ? 'bg-red-50 border-red-300 text-red-600' : 'bg-white border-gray-300'}`}>
-                  <Grid size={16} /> Grid Mode
+                  <Grid size={16} /> 그리드 모드
                 </button>
                 <button onClick={saveTemplate} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-1">
-                  <Save size={16} /> Save
+                  <Save size={16} /> 저장
                 </button>
                 <label className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center gap-1 cursor-pointer">
-                  <FolderOpen size={16} /> Load
+                  <FolderOpen size={16} /> 불러오기
                   <input type="file" accept=".json" onChange={loadTemplate} className="hidden" />
                 </label>
                 <button onClick={handleClearAll} className="px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center gap-1">
-                  <Trash2 size={16} /> Clear All
+                  <Trash2 size={16} /> 모두 삭제
                 </button>
               </div>
             </div>
 
             {/* Groups List */}
             <div className="bg-white rounded-xl shadow p-4">
-              <h3 className="font-semibold text-gray-700 mb-3">Groups ({template.groups.length})</h3>
+              <h3 className="font-semibold text-gray-700 mb-3">그룹 ({template.groups.length})</h3>
               <div className="flex flex-wrap gap-2">
                 {template.groups.map(group => (
                   <div
@@ -512,7 +675,7 @@ export default function App() {
             {/* Value Selector */}
             {activeGroupId && (
               <div className="bg-white rounded-xl shadow p-4">
-                <h3 className="font-semibold text-gray-700 mb-3">Select Value to Map</h3>
+                <h3 className="font-semibold text-gray-700 mb-3">매핑할 값 선택</h3>
                 <div className="flex gap-2 flex-wrap">
                   {['0','1','2','3','4','5','6','7','8','9','A','B','C','D','E'].map(val => (
                     <button
@@ -526,7 +689,68 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                <p className="text-sm text-gray-500 mt-2">Click on the canvas to place bubbles. Right-click to delete.</p>
+                <p className="text-sm text-gray-500 mt-2">캔버스를 클릭하여 마킹 영역을 배치하세요. 우클릭 시 삭제됩니다.</p>
+              </div>
+            )}
+
+            {/* 그리드 도구 설정 */}
+            {isGridMode && (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-wrap gap-4 items-center animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2">
+                  <Grid className="text-blue-600" size={20} />
+                  <span className="font-bold text-blue-900 text-sm">그리드 설정:</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">시작 번호:</label>
+                  <input
+                    type="number"
+                    value={gridStartNo}
+                    onChange={(e) => setGridStartNo(parseInt(e.target.value) || 1)}
+                    className="w-16 px-2 py-1 border border-blue-300 rounded text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">행(Rows):</label>
+                  <input
+                    type="number"
+                    value={gridRows}
+                    onChange={(e) => setGridRows(parseInt(e.target.value) || 1)}
+                    className="w-16 px-2 py-1 border border-blue-300 rounded text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">열(Cols):</label>
+                  <input
+                    type="number"
+                    value={gridCols}
+                    onChange={(e) => setGridCols(parseInt(e.target.value) || 1)}
+                    className="w-16 px-2 py-1 border border-blue-300 rounded text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">선택지:</label>
+                  <input
+                    type="text"
+                    value={gridOptions}
+                    onChange={(e) => setGridOptions(e.target.value)}
+                    placeholder="1,2,3,4,5"
+                    className="w-32 px-2 py-1 border border-blue-300 rounded text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">유형:</label>
+                  <select
+                    value={gridType}
+                    onChange={(e) => setGridType(e.target.value as 'question' | 'identity')}
+                    className="px-2 py-1 border border-blue-300 rounded text-sm bg-white"
+                  >
+                    <option value="question">문제</option>
+                    <option value="identity">수험번호</option>
+                  </select>
+                </div>
+                <div className="text-blue-600 text-xs italic ml-auto">
+                  * 캔버스에서 시작 모서리와 끝 모서리 두 곳을 클릭하세요.
+                </div>
               </div>
             )}
 
@@ -548,13 +772,19 @@ export default function App() {
             </div>
 
             {/* Next Step */}
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStep('upload_filled')}
+                className="px-6 py-3 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 font-semibold"
+              >
+                마킹 건너뛰기
+              </button>
               <button
                 onClick={() => setStep('upload_filled')}
                 disabled={template.groups.length === 0}
                 className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Next: Upload Filled Sheet <ArrowRight size={20} />
+                다음: 답안지 업로드 <ArrowRight size={20} />
               </button>
             </div>
           </div>
@@ -567,12 +797,12 @@ export default function App() {
                 <FileText size={32} />
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Upload Filled OMR</h2>
-                <p className="text-gray-500">Upload the completed OMR sheet to grade.</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">답안지 업로드</h2>
+                <p className="text-gray-500">채점할 답안지 이미지를 업로드하세요.</p>
               </div>
               <label className="block w-full cursor-pointer">
                 <div className="w-full h-40 border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center hover:border-green-500 transition-colors">
-                  <span className="text-gray-400 font-medium hover:text-green-500">Select Image File</span>
+                  <span className="text-gray-400 font-medium hover:text-green-500">이미지 파일 선택</span>
                 </div>
                 <input type="file" accept="image/*" onChange={handleFilledUpload} className="hidden" />
               </label>
@@ -580,7 +810,7 @@ export default function App() {
                 onClick={() => setStep('mapping')}
                 className="w-full py-3 bg-gray-100 text-gray-700 font-semibold rounded-lg hover:bg-gray-200 flex items-center justify-center gap-2"
               >
-                <ChevronLeft size={20} /> Back to Mapping
+                <ChevronLeft size={20} /> 영역 설정으로 돌아가기
               </button>
             </div>
           </div>
@@ -589,27 +819,59 @@ export default function App() {
         {step === 'grading' && filledImage && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl shadow p-4 flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold text-gray-700">Ready to Grade</h2>
-                <p className="text-sm text-gray-500">{filledFileName || 'Uploaded sheet'}</p>
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setStep('upload_filled')}
+                  className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
+                  title="답안지 업로드로 돌아가기"
+                >
+                  <ChevronLeft size={20} />
+                  <span className="text-sm font-medium">뒤로</span>
+                </button>
+                <div className="h-8 w-px bg-gray-200 mr-2"></div>
+                <div>
+                  <h2 className="font-semibold text-gray-700">채점 준비 완료</h2>
+                  <p className="text-sm text-gray-500">{filledFileName || '업로드된 시트'}</p>
+                </div>
               </div>
               <div className="flex gap-2">
+                <button
+                  onClick={() => setIsDebugMode(!isDebugMode)}
+                  className={`px-4 py-2 border rounded-lg flex items-center gap-2 transition-colors ${isDebugMode ? 'bg-red-100 border-red-300 text-red-600' : 'bg-white border-gray-300 text-gray-600'}`}
+                >
+                  <AlertTriangle size={18} /> 디버그 모드 {isDebugMode ? '끄기' : '활성화'}
+                </button>
+                <button
+                  onClick={() => {
+                    setRawImageForAlignment(filledImage);
+                    setIsAlignmentEditorOpen(true);
+                  }}
+                  className="px-4 py-2 border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50 flex items-center gap-2"
+                >
+                  <Crop size={18} /> 영역 보정 및 자르기
+                </button>
                 <button
                   onClick={() => setStep('upload_filled')}
                   className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                 >
-                  Change Image
+                  이미지 변경
                 </button>
                 <button
                   onClick={runGrading}
                   className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
                 >
-                  <Play size={18} /> Start Grading
+                  <Play size={18} /> 채점 시작
                 </button>
               </div>
             </div>
-            <div className="h-[600px] bg-white rounded-xl shadow p-4">
-              <img src={filledImage} alt="Filled OMR" className="w-full h-full object-contain" />
+            <div className="h-[75vh] max-h-[800px] bg-gray-200 rounded-xl shadow-inner p-4 flex items-center justify-center overflow-hidden relative group">
+              <div className="relative h-full w-full flex items-center justify-center">
+                <img 
+                  src={filledImage} 
+                  alt="Filled OMR" 
+                  className="max-w-full max-h-full object-contain shadow-2xl border border-gray-300" 
+                />
+              </div>
             </div>
           </div>
         )}
@@ -618,10 +880,57 @@ export default function App() {
           <ResultsView result={result} onReset={() => {
             setFilledImage(null);
             setResult(null);
-            setStep('upload_template');
+            setStep('upload_filled'); // 1단계가 아닌 3단계로 이동
           }} />
         )}
       </main>
+
+      {/* Loading Overlay */}
+      {isGrading && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4">
+            <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+            <div className="text-center">
+              <h3 className="font-bold text-lg text-gray-900">채점 진행 중...</h3>
+              <p className="text-sm text-gray-500">이미지를 분석하고 있습니다. 잠시만 기다려 주세요.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alignment Editor Overlay */}
+      {isAlignmentEditorOpen && rawImageForAlignment && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[60] p-4">
+          <div className="bg-white w-full max-w-6xl h-[90vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                <Crop size={20} className="text-blue-600" />
+                이미지 영역 보정 및 자르기
+              </h3>
+              <button 
+                onClick={() => setIsAlignmentEditorOpen(false)}
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <AlignmentEditor 
+                imageUrl={rawImageForAlignment} 
+                onComplete={(processedUrl) => {
+                  if (step === 'mapping') {
+                    setTemplate(prev => ({ ...prev, imageUrl: processedUrl }));
+                  } else {
+                    setFilledImage(processedUrl);
+                  }
+                  setIsAlignmentEditorOpen(false);
+                }}
+                onCancel={() => setIsAlignmentEditorOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
