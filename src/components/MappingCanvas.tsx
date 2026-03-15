@@ -224,7 +224,7 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // Define danger zone (top-right corner, approx 200x200px)
+        // Define Danger zone (top-right corner, approx 200x200px)
         // If mouse is here, move magnifier to bottom
         const inDangerZone = mouseX > (rect.width - 250) && mouseY < 250;
 
