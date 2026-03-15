@@ -26,3 +26,4 @@ dist-ssr
 # Local scripts
 openserver.bat
 push.bat
+pull.bat
