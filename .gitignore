@@ -22,8 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Local scripts
-openserver.bat
-push.bat
-pull.bat
