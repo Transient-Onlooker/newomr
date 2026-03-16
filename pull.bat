@@ -1,18 +1,31 @@
-@echo off
-echo Pulling from GitHub (discarding local changes)...
-cd /d "%~dp0"
+﻿@echo off
+chcp 65001 > nul
+setlocal enabledelayedexpansion
 
-echo Fetching latest changes...
-git fetch origin main
+echo ============================================
+echo [GitHub Pull: 최신 소스 가져오기]
+echo ============================================
+echo.
 
-echo Checking out main branch...
-git checkout -f main
+set /p choice="원격 저장소의 최신 소스를 가져오시겠습니까? (y/n): "
+if /i "%choice%" neq "y" (
+    echo [중단] 작업을 취소했습니다.
+    pause
+    exit /b
+)
 
-echo Resetting local changes to match GitHub...
-git reset --hard origin/main
+echo.
+echo [1/1] git pull 실행 중...
+git pull origin main
 
-echo Cleaning up untracked files...
-git clean -fd
+if %errorlevel% neq 0 (
+    echo.
+    echo [오류] 소스를 가져오는 중 문제가 발생했습니다.
+    echo 로컬 변경 사항이 있어 충돌이 났을 수 있습니다.
+    pause
+    exit /b
+)
 
-echo Pull complete!
+echo.
+echo [완료] 최신 소스 업데이트 완료!
 pause
