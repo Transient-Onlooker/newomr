@@ -2,30 +2,28 @@
 chcp 65001 > nul
 setlocal enabledelayedexpansion
 
-echo ============================================
-echo [GitHub Pull: 최신 소스 가져오기]
-echo ============================================
+echo [Pull] GitHub에서 최신 코드를 가져옵니다...
 echo.
 
-set /p choice="원격 저장소의 최신 소스를 가져오시겠습니까? (y/n): "
-if /i "%choice%" neq "y" (
-    echo [중단] 작업을 취소했습니다.
-    pause
-    exit /b
+:: 1. 작업 중인 내용이 있는지 확인
+git status --porcelain | findstr /v "^$" > nul
+if %errorlevel% equ 0 (
+    echo [정보] 수정 중인 파일이 발견되었습니다. 안전하게 임시 보관(stash)합니다.
+    git stash
+    set "STASHED=true"
 )
 
-echo.
-echo [1/1] git pull 실행 중...
+:: 2. Pull 실행
+echo [진행] git pull origin main...
 git pull origin main
 
-if %errorlevel% neq 0 (
+:: 3. 임시 보관했던 내용 복구
+if "!STASHED!"=="true" (
     echo.
-    echo [오류] 소스를 가져오는 중 문제가 발생했습니다.
-    echo 로컬 변경 사항이 있어 충돌이 났을 수 있습니다.
-    pause
-    exit /b
+    echo [정보] 임시 보관했던 내 작업 내용을 다시 적용합니다.
+    git stash pop
 )
 
 echo.
-echo [완료] 최신 소스 업데이트 완료!
+echo [완료] 작업이 끝났습니다.
 pause
