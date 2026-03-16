@@ -15,6 +15,9 @@ interface MappingCanvasProps {
   isGridMode?: boolean;
   onGridClick?: (xPct: number, yPct: number) => void;
   gridPoints?: { x: number; y: number }[];
+  isBatchMode?: boolean;
+  batchSelectedBubbles?: { groupId: string; index: number }[];
+  onBatchSelect?: (selected: { groupId: string; index: number }[]) => void;
 }
 
 const MappingCanvas: React.FC<MappingCanvasProps> = ({
@@ -28,7 +31,10 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
   onDeleteBubble,
   isGridMode = false,
   onGridClick,
-  gridPoints = []
+  gridPoints = [],
+  isBatchMode = false,
+  batchSelectedBubbles = [],
+  onBatchSelect
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -38,6 +44,9 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
   const [draggingBubble, setDraggingBubble] = useState<{ groupId: string, index: number } | null>(null);
   const [magPosition, setMagPosition] = useState<'top' | 'bottom'>('top');
   const [, setForceUpdate] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number, y: number } | null>(null);
+  const [dragEnd, setDragEnd] = useState<{ x: number, y: number } | null>(null);
 
   useEffect(() => {
     const handleResize = () => setForceUpdate(n => n + 1);
@@ -81,17 +90,42 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
 
     groups.forEach((group) => {
       const isGroupActive = group.id === activeGroupId && !isGridMode;
-      group.bubbles.forEach((bubble) => {
+      group.bubbles.forEach((bubble, index) => {
         const cx = bubble.x * drawWidth;
         const cy = bubble.y * drawHeight;
         const r = bubbleRadiusPct * drawWidth;
+        
+        // Check if this bubble is selected in batch mode
+        const isSelected = isBatchMode && batchSelectedBubbles.some(
+          b => b.groupId === group.id && b.index === index
+        );
+        
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-        ctx.fillStyle = isGroupActive ? 'rgba(59, 130, 246, 0.4)' : 'rgba(100, 116, 139, 0.3)';
-        if (isGroupActive && bubble.value === activeValue) ctx.fillStyle = 'rgba(34, 197, 94, 0.7)';
+        
+        if (isSelected) {
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.7)'; // Purple for selected
+        } else if (isGroupActive) {
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+        } else {
+          ctx.fillStyle = 'rgba(100, 116, 139, 0.3)';
+        }
+        
+        if (isGroupActive && bubble.value === activeValue && !isSelected) {
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.7)';
+        }
+        
         ctx.fill();
         ctx.lineWidth = lineWidth;
-        ctx.strokeStyle = isGroupActive ? '#2563EB' : '#64748B';
+        
+        if (isSelected) {
+          ctx.strokeStyle = '#A855F7'; // Purple border for selected
+        } else if (isGroupActive) {
+          ctx.strokeStyle = '#2563EB';
+        } else {
+          ctx.strokeStyle = '#64748B';
+        }
+        
         ctx.stroke();
         ctx.fillStyle = '#1e293b';
         ctx.font = `bold ${textSize}px sans-serif`;
@@ -114,7 +148,7 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
         ctx.stroke();
       });
     }
-  }, [img, groups, scale, activeGroupId, activeValue, bubbleRadiusPct, isGridMode, gridPoints]);
+  }, [img, groups, scale, activeGroupId, activeValue, bubbleRadiusPct, isGridMode, gridPoints, isBatchMode, batchSelectedBubbles]);
 
   const getMousePosInImage = (e: MouseEvent) => {
     if (!canvasRef.current || !img) return { x: 0, y: 0 };
@@ -132,6 +166,14 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
 
     if (isGridMode && onGridClick) {
       onGridClick(x / drawWidth, y / drawHeight);
+      return;
+    }
+
+    // Batch mode: start drag selection
+    if (isBatchMode && e.button === 0) {
+      setIsDragging(true);
+      setDragStart({ x, y });
+      setDragEnd({ x, y });
       return;
     }
 
@@ -177,12 +219,43 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
           y: Math.max(0, Math.min(1, y / img.naturalHeight))
         });
     }
+
+    if (isDragging && dragStart) {
+      setDragEnd({ x, y });
+    }
   };
 
-  const handleMouseUp = () => setDraggingBubble(null);
+  const handleMouseUp = () => {
+    if (isDragging && dragStart && dragEnd && onBatchSelect) {
+      // Calculate selected bubbles within drag rectangle
+      const minX = Math.min(dragStart.x, dragEnd.x);
+      const maxX = Math.max(dragStart.x, dragEnd.x);
+      const minY = Math.min(dragStart.y, dragEnd.y);
+      const maxY = Math.max(dragStart.y, dragEnd.y);
+      const drawWidth = img!.naturalWidth;
+      const drawHeight = img!.naturalHeight;
+
+      const selected: { groupId: string; index: number }[] = [];
+      groups.forEach((group) => {
+        group.bubbles.forEach((bubble, index) => {
+          const bx = bubble.x * drawWidth;
+          const by = bubble.y * drawHeight;
+          // Check if bubble center is within the drag rectangle
+          if (bx >= minX && bx <= maxX && by >= minY && by <= maxY) {
+            selected.push({ groupId: group.id, index });
+          }
+        });
+      });
+      onBatchSelect(selected);
+    }
+    setIsDragging(false);
+    setDragStart(null);
+    setDragEnd(null);
+    setDraggingBubble(null);
+  };
 
   const renderMagnifier = () => {
-      if (!img || isGridMode || draggingBubble) return null;
+      if (!img || draggingBubble) return null;
       const magSize = 250;
       const zoomLevel = 3;
       const drawWidth = img.naturalWidth;
@@ -194,24 +267,26 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
       const visibleBubbles: { bx: number, by: number, br: number, val: string, color: string }[] = [];
       const halfRange = (magSize / 2) / zoomLevel;
 
-      groups.forEach(group => {
-        const isGroupActive = group.id === activeGroupId;
-        group.bubbles.forEach(bubble => {
-          const bx = bubble.x * drawWidth;
-          const by = bubble.y * drawHeight;
-          const br = bubbleRadiusPct * drawWidth;
+      if (!isGridMode) {
+        groups.forEach(group => {
+          const isGroupActive = group.id === activeGroupId;
+          group.bubbles.forEach(bubble => {
+            const bx = bubble.x * drawWidth;
+            const by = bubble.y * drawHeight;
+            const br = bubbleRadiusPct * drawWidth;
 
-          if (Math.abs(bx - mousePos.x) < halfRange + br && Math.abs(by - mousePos.y) < halfRange + br) {
-            visibleBubbles.push({
-              bx: (bx - mousePos.x) * zoomLevel + magSize / 2,
-              by: (by - mousePos.y) * zoomLevel + magSize / 2,
-              br: br * zoomLevel,
-              val: bubble.value,
-              color: isGroupActive ? (bubble.value === activeValue ? 'rgba(34, 197, 94, 0.7)' : 'rgba(59, 130, 246, 0.4)') : 'rgba(100, 116, 139, 0.3)'
-            });
-          }
+            if (Math.abs(bx - mousePos.x) < halfRange + br && Math.abs(by - mousePos.y) < halfRange + br) {
+              visibleBubbles.push({
+                bx: (bx - mousePos.x) * zoomLevel + magSize / 2,
+                by: (by - mousePos.y) * zoomLevel + magSize / 2,
+                br: br * zoomLevel,
+                val: bubble.value,
+                color: isGroupActive ? (bubble.value === activeValue ? 'rgba(34, 197, 94, 0.7)' : 'rgba(59, 130, 246, 0.4)') : 'rgba(100, 116, 139, 0.3)'
+              });
+            }
+          });
         });
-      });
+      }
 
       return (
           <div className={`absolute right-4 ${magPosition === 'top' ? 'top-4' : 'bottom-4'} border-2 border-slate-800 bg-white rounded shadow-2xl z-50 overflow-hidden pointer-events-none transition-all duration-300`} style={{ width: magSize, height: magSize }}>
@@ -263,7 +338,23 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
       <div className="flex-1 overflow-auto relative w-full h-full bg-slate-100">
         {img ? (
             <div style={{ width: img.naturalWidth * scale, height: img.naturalHeight * scale, margin: 'auto' }} className="relative shadow-2xl bg-white">
-                <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onContextMenu={(e) => e.preventDefault()} style={{ width: '100%', height: '100%', display: 'block' }} className={isGridMode ? 'cursor-crosshair' : 'cursor-default'} />
+                <canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onContextMenu={(e) => e.preventDefault()} style={{ width: '100%', height: '100%', display: 'block' }} className={isGridMode ? 'cursor-crosshair' : isBatchMode ? 'cursor-crosshair' : 'cursor-default'} />
+                {/* Drag Selection Rectangle */}
+                {isDragging && dragStart && dragEnd && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: Math.min(dragStart.x * scale, dragEnd.x * scale),
+                      top: Math.min(dragStart.y * scale, dragEnd.y * scale),
+                      width: Math.abs(dragEnd.x - dragStart.x) * scale,
+                      height: Math.abs(dragEnd.y - dragStart.y) * scale,
+                      border: '2px dashed #A855F7',
+                      backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                      pointerEvents: 'none',
+                      zIndex: 100
+                    }}
+                  />
+                )}
             </div>
         ) : (
             <div className="absolute inset-0 flex items-center justify-center text-gray-500">이미지 불러오는 중...</div>
@@ -272,6 +363,11 @@ const MappingCanvas: React.FC<MappingCanvasProps> = ({
       {isGridMode && (
          <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold animate-pulse z-20">
             {gridPoints.length === 0 ? "좌측 상단 모서리를 클릭하세요" : "우측 하단 모서리를 클릭하세요"}
+         </div>
+      )}
+      {isBatchMode && (
+         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-purple-600 text-white px-4 py-2 rounded-full shadow-lg text-sm font-bold animate-pulse z-20">
+            {batchSelectedBubbles.length === 0 ? "드래그하여 버블 선택" : `${batchSelectedBubbles.length}개 선택됨 - 값 변경을 클릭하세요`}
          </div>
       )}
     </div>

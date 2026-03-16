@@ -104,6 +104,11 @@ export default function App() {
   const [gridDirection, setGridDirection] = useState<'horizontal' | 'vertical'>('vertical');
   const [gridType, setGridType] = useState<'question' | 'identity'>('question');
 
+  // Batch Edit Mode State
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchSelectedBubbles, setBatchSelectedBubbles] = useState<{groupId: string, index: number}[]>([]);
+  const [batchActiveValue, setBatchActiveValue] = useState<string | null>(null);
+
   // --- Handlers ---
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -260,9 +265,101 @@ export default function App() {
   };
 
   const startGridTool = () => {
-    setIsGridMode(true);
-    setGridPoints([]);
-    setActiveGroupId(null);
+    if (isGridMode) {
+      setIsGridMode(false);
+      setGridPoints([]);
+    } else {
+      setIsGridMode(true);
+      setGridPoints([]);
+      setActiveGroupId(null);
+      // 일괄 수정 모드 해제
+      if (isBatchMode) {
+        setIsBatchMode(false);
+        setBatchSelectedBubbles([]);
+        setBatchActiveValue(null);
+      }
+    }
+  };
+
+  const toggleBatchMode = () => {
+    if (isBatchMode) {
+      setIsBatchMode(false);
+      setBatchSelectedBubbles([]);
+      setBatchActiveValue(null);
+      setActiveGroupId(null);
+    } else {
+      setIsBatchMode(true);
+      setIsGridMode(false);
+      setGridPoints([]);
+      setActiveGroupId(null);
+      setBatchSelectedBubbles([]);
+      setBatchActiveValue(null);
+    }
+  };
+
+  const handleBatchValueChange = (value: string) => {
+    if (!batchActiveValue) {
+      setBatchActiveValue(value);
+    }
+    if (batchSelectedBubbles.length === 0) return;
+
+    saveHistory();
+    const newGroups = template.groups.map(group => {
+      const relevantIndices = batchSelectedBubbles
+        .filter(b => b.groupId === group.id)
+        .map(b => b.index);
+
+      if (relevantIndices.length === 0) return group;
+
+      const newBubbles = group.bubbles.map((bubble, idx) => {
+        if (relevantIndices.includes(idx)) {
+          return { ...bubble, value };
+        }
+        return bubble;
+      });
+
+      return { ...group, bubbles: newBubbles };
+    });
+
+    setTemplate({ ...template, groups: newGroups });
+    // 일괄 수정 완료 후 선택 초기화
+    setBatchSelectedBubbles([]);
+    setBatchActiveValue(null);
+  };
+
+  const handleBatchRadiusChange = (delta: number) => {
+    if (batchSelectedBubbles.length === 0) return;
+
+    saveHistory();
+    const newGroups = template.groups.map(group => {
+      const relevantIndices = batchSelectedBubbles
+        .filter(b => b.groupId === group.id)
+        .map(b => b.index);
+
+      if (relevantIndices.length === 0) return group;
+
+      const newBubbles = group.bubbles.map((bubble, idx) => {
+        if (relevantIndices.includes(idx)) {
+          return { ...bubble, y: bubble.y + delta };
+        }
+        return bubble;
+      });
+
+      return { ...group, bubbles: newBubbles };
+    });
+
+    setTemplate({ ...template, groups: newGroups });
+    // 선택 상태는 유지하여 연속 조절 가능
+  };
+
+  const handleBatchSizeChange = (delta: number) => {
+    if (batchSelectedBubbles.length === 0) return;
+
+    saveHistory();
+    const newRadius = Math.max(0.005, Math.min(0.1, template.bubbleRadius + delta));
+
+    setTemplate({ ...template, bubbleRadius: newRadius });
+    // 선택 상태는 유지하여 연속 조절 가능
   };
 
   const handleGridClick = (x: number, y: number) => {
@@ -628,6 +725,9 @@ export default function App() {
                 </button>
               </div>
               <div className="flex gap-2">
+                <button onClick={toggleBatchMode} className={`px-4 py-2 rounded-lg border flex items-center gap-1 ${isBatchMode ? 'bg-purple-50 border-purple-300 text-purple-600' : 'bg-white border-gray-300'}`}>
+                  <MousePointer2 size={16} /> 일괄 수정 모드
+                </button>
                 <button onClick={startGridTool} className={`px-4 py-2 rounded-lg border flex items-center gap-1 ${isGridMode ? 'bg-red-50 border-red-300 text-red-600' : 'bg-white border-gray-300'}`}>
                   <Grid size={16} /> 그리드 모드
                 </button>
@@ -673,7 +773,7 @@ export default function App() {
             </div>
 
             {/* Value Selector */}
-            {activeGroupId && (
+            {activeGroupId && !isBatchMode && (
               <div className="bg-white rounded-xl shadow p-4">
                 <h3 className="font-semibold text-gray-700 mb-3">매핑할 값 선택</h3>
                 <div className="flex gap-2 flex-wrap">
@@ -690,6 +790,58 @@ export default function App() {
                   ))}
                 </div>
                 <p className="text-sm text-gray-500 mt-2">캔버스를 클릭하여 마킹 영역을 배치하세요. 우클릭 시 삭제됩니다.</p>
+              </div>
+            )}
+
+            {/* Batch Mode Value Selector */}
+            {isBatchMode && batchSelectedBubbles.length > 0 && (
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                <h3 className="font-semibold text-purple-700 mb-3">선택된 버블 일괄 수정</h3>
+                <div className="flex gap-2 flex-wrap mb-3">
+                  {['0','1','2','3','4','5','6','7','8','9','A','B','C','D','E'].map(val => (
+                    <button
+                      key={val}
+                      onClick={() => handleBatchValueChange(val)}
+                      className={`w-10 h-10 rounded-lg font-semibold transition-colors ${
+                        batchActiveValue === val ? 'bg-purple-500 text-white' : 'bg-white hover:bg-purple-100 border border-purple-200'
+                      }`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <span className="text-sm font-medium text-purple-700">위치 조절:</span>
+                  <button
+                    onClick={() => handleBatchRadiusChange(-0.005)}
+                    className="px-3 py-1 bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 text-sm"
+                  >
+                    ↑ 위로
+                  </button>
+                  <button
+                    onClick={() => handleBatchRadiusChange(0.005)}
+                    className="px-3 py-1 bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 text-sm"
+                  >
+                    ↓ 아래로
+                  </button>
+                  <span className="text-xs text-purple-600 ml-2">* Y 위치</span>
+                </div>
+                <div className="flex gap-2 items-center flex-wrap mt-2">
+                  <span className="text-sm font-medium text-purple-700">크기 조절:</span>
+                  <button
+                    onClick={() => handleBatchSizeChange(-0.002)}
+                    className="px-3 py-1 bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 text-sm"
+                  >
+                    - 작게
+                  </button>
+                  <button
+                    onClick={() => handleBatchSizeChange(0.002)}
+                    className="px-3 py-1 bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 text-sm"
+                  >
+                    + 크게
+                  </button>
+                  <span className="text-xs text-purple-600 ml-2">* 반지름</span>
+                </div>
               </div>
             )}
 
@@ -724,6 +876,18 @@ export default function App() {
                     type="number"
                     value={gridCols}
                     onChange={(e) => setGridCols(parseInt(e.target.value) || 1)}
+                    className="w-16 px-2 py-1 border border-blue-300 rounded text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-blue-700">반지름:</label>
+                  <input
+                    type="number"
+                    value={template.bubbleRadius}
+                    onChange={(e) => setTemplate({ ...template, bubbleRadius: parseFloat(e.target.value) || 0.02 })}
+                    step="0.01"
+                    min="0.01"
+                    max="0.1"
                     className="w-16 px-2 py-1 border border-blue-300 rounded text-sm"
                   />
                 </div>
@@ -768,6 +932,9 @@ export default function App() {
                 isGridMode={isGridMode}
                 onGridClick={handleGridClick}
                 gridPoints={gridPoints}
+                isBatchMode={isBatchMode}
+                batchSelectedBubbles={batchSelectedBubbles}
+                onBatchSelect={setBatchSelectedBubbles}
               />
             </div>
 
