@@ -109,6 +109,16 @@ export default function App() {
   const [batchSelectedBubbles, setBatchSelectedBubbles] = useState<{groupId: string, index: number}[]>([]);
   const [batchActiveValue, setBatchActiveValue] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!activeGroupId) {
+      setEditingGroup(null);
+      return;
+    }
+
+    const activeGroup = template.groups.find(group => group.id === activeGroupId) ?? null;
+    setEditingGroup(activeGroup);
+  }, [activeGroupId, template.groups]);
+
   // --- Handlers ---
   const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -194,6 +204,7 @@ export default function App() {
     }));
     setNewGroupLabel('');
     setActiveGroupId(newGroup.id);
+    setEditingGroup(newGroup);
     setActiveValue(newGroupType === 'identity' ? '0' : '1');
   };
 
@@ -213,6 +224,7 @@ export default function App() {
           groups: prev.groups.filter(g => g.id !== id)
       }));
       if (activeGroupId === id) setActiveGroupId(null);
+      if (editingGroup?.id === id) setEditingGroup(null);
   };
 
   const handleClearAll = () => {
@@ -439,6 +451,11 @@ export default function App() {
       ...prev,
       groups: [...prev.groups, ...newGroups]
     }));
+    if (newGroups.length > 0) {
+      setActiveGroupId(newGroups[0].id);
+      setEditingGroup(newGroups[0]);
+      setActiveValue(newGroups[0].type === 'identity' ? '0' : '1');
+    }
     setGridStartNo(prev => prev + (numRows * numCols));
   };
 
@@ -771,6 +788,77 @@ export default function App() {
                 ))}
               </div>
             </div>
+
+            {editingGroup && (
+              <div className="bg-white rounded-xl shadow p-4 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-gray-700">선택 그룹 설정</h3>
+                    <p className="text-sm text-gray-500">선택한 그룹의 이름, 배점, 정답을 수정합니다.</p>
+                  </div>
+                  <button
+                    onClick={saveGroupEdit}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                  >
+                    <Save size={16} /> 그룹 저장
+                  </button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium text-gray-700">그룹 이름</span>
+                    <input
+                      type="text"
+                      value={editingGroup.label}
+                      onChange={(e) => setEditingGroup({ ...editingGroup, label: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                  </label>
+
+                  {editingGroup.type === 'question' && (
+                    <>
+                      <label className="space-y-2">
+                        <span className="text-sm font-medium text-gray-700">배점</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={editingGroup.points ?? ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setEditingGroup({
+                              ...editingGroup,
+                              points: value === '' ? undefined : parseFloat(value),
+                            });
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </label>
+
+                      <label className="space-y-2 md:col-span-2">
+                        <span className="text-sm font-medium text-gray-700">정답</span>
+                        <input
+                          type="text"
+                          placeholder="예: A 또는 A,B"
+                          value={(editingGroup.correctAnswer ?? []).join(',')}
+                          onChange={(e) => {
+                            const answers = e.target.value
+                              .split(',')
+                              .map(value => value.trim())
+                              .filter(Boolean);
+
+                            setEditingGroup({
+                              ...editingGroup,
+                              correctAnswer: answers,
+                            });
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Value Selector */}
             {activeGroupId && !isBatchMode && (
