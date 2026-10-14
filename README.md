@@ -1,52 +1,60 @@
-# 🎯 스마트 OMR 채점기 (Smart OMR Grader)
+# 🎯 스마트 OMR 채점기 (newomr)
 
-웹 브라우저에서 별도의 서버나 외부 라이브러리(OpenCV 등) 없이 작동하는 **고성능 OMR 자동 채점 솔루션**입니다. 순수 HTML5 Canvas API와 알고리즘만으로 구현되어 가볍고 강력합니다.
+이미지에서 OMR 마커와 답안 버블을 분석하는 **브라우저 기반 채점 도구**입니다. React·TypeScript UI와 HTML Canvas 기반 자체 영상 처리 코드를 사용하며, 마커 탐색과 답안 판독에 OpenCV를 사용하지 않습니다.
 
-## 🚀 주요 기능
+**[웹 데모](https://autoomr.mcv.kr/)**
 
-- **3점 마커 기반 자동 정렬**: OMR 카드의 3개 모서리 마커(TL, TR, BR)를 감지하여 이미지의 방향과 기울기를 자동으로 보정합니다.
-- **정밀 어핀 변환 (Affine Warp)**: 이미지가 비뚤어지거나 회전되어 있어도 수학적 변환을 통해 표준 A4 가로 규격(**1414x1000px**)으로 정규화합니다.
-- **BFS 기반 노이즈 필터링**: 단순 픽셀 탐색이 아닌 BFS(너비 우선 탐색) Blob 알고리즘을 사용하여 글씨나 노이즈를 무시하고 실제 마커만 정확히 찾아냅니다.
-- **Red Dropout**: 빨간색 가이드 라인이나 텍스트를 무시하고 검은색 마킹만 정확하게 인식합니다.
-- **디버그 모드**: 마커 인식 위치를 실시간으로 시각화하여 시스템의 작동 상태를 즉시 확인할 수 있습니다.
-- **그리드 매핑 툴**: 문항 수와 보기 개수에 맞춰 드래그 한 번으로 수십 개의 문항을 순식간에 배치할 수 있습니다.
+## 주요 기능
 
-## 🛠 기술 스택
+- **마커 탐색:** 이미지의 TL(좌상), TR(우상), BR(우하), BL(좌하) 영역에서 흑백 이진화와 BFS 연결요소 탐색으로 후보를 구합니다.
+- **3점 기반 정렬:** TL·TR·BR 마커가 검출되면 회전각과 수평·수직 길이를 계산해 **1414×1000px** 정규화 캔버스에 그립니다.
+- **방향 보정 재시도:** 일부 마커가 빠진 경우 인식된 마커 배치에 따라 이미지를 회전한 후 다시 탐색합니다.
+- **노이즈 필터링:** 연결요소 크기, 밀도(solidity), 가로세로 비율로 마커 후보를 평가합니다.
+- **버블 판독:** 문항별 지정된 원 영역의 이진화 후 검은 픽셀 비율을 계산해 마킹을 판정합니다.
+- **템플릿 편집:** Canvas 기반 답안 좌표 지정 및 편집, 결과 화면과 디버그 마커 표시를 제공합니다.
 
-- **Frontend**: React 19, TypeScript, Vite 6
-- **Styling**: Tailwind CSS v4
-- **Engine**: Pure HTML5 Canvas API (No external CV library)
-- **Icons**: Lucide React
+## 실제 정렬 방식과 제한
 
-## 📦 핵심 엔진 (`OmrEngine`)
+이 구현은 일반적인 **투영 변환(Homography)이나 사다리꼴 원근 보정이 아닙니다.** `src/utils/omrEngine.ts`의 `warpImage()`는 3개 기준점에서 구한 회전각과 축별 길이에 따라 캔버스를 변환합니다. 기울기와 크기 차이는 보정하지만, 비스듬한 촬영에서 발생하는 원근 왜곡을 항상 해결하지는 못합니다. 마커를 찾지 못하면 입력 이미지를 그대로 반환할 수 있으므로 **디버그 화면에서 정렬 상태를 확인**해야 합니다.
 
-이 프로젝트의 심장부인 `src/utils/omrEngine.ts`는 다음과 같은 처리를 수행합니다.
+'Red Dropout'처럼 색상을 선택적으로 제거한다는 기존 설명은 검증 가능한 전용 색 분리 로직이 없어 제거했습니다. 현재 코드는 주로 밝기 임계값을 적용합니다.
 
-1.  **Image Loading**: 브라우저 메모리에 이미지를 로드합니다.
-2.  **Binarization**: 채점 및 마커 탐색을 위해 최적화된 임계값으로 이진화를 수행합니다.
-3.  **Marker Detection**: 4개 모서리 영역에서 BFS 알고리즘을 통해 마커를 탐색하고, 밀도(Solidity)와 형태(Aspect Ratio)를 검사하여 가짜 마커를 걸러냅니다.
-4.  **Perspective Correction**: 발견된 마커를 기준으로 이미지를 반듯하게 펴고 1414x1000 해상도로 정규화합니다.
-5.  **Grading**: 정규화된 좌표계에서 각 버블의 검은색 픽셀 점유율을 계산하여 마킹 여부를 판별합니다.
+## 실행 방법
 
-## 📖 사용 방법
+Node.js와 npm이 설치된 환경에서:
 
-### 1. 템플릿 설정 (Mapping)
-- OMR 카드 원본 이미지를 업로드합니다.
-- 그리드 툴을 사용하여 정답 칸의 위치를 지정합니다.
-- 설정값을 JSON으로 내보내거나 브라우저에 저장합니다.
+```bash
+npm install
+npm run dev
+```
 
-### 2. 채점 (Grading)
-- 학생들이 마킹한 답안지 사진이나 스캔본을 업로드합니다.
-- 시스템이 자동으로 마커를 찾아 정렬합니다.
-- `채점 시작` 버튼을 누르면 실시간으로 점수와 오답이 계산됩니다.
+프로덕션 빌드 및 정적 코드 검사:
 
-## 🤝 엔진 공유 (For Developers)
+```bash
+npm run build
+npm run lint
+```
 
-`OmrEngine` 로직만 따로 사용하고 싶다면 다음 파일들을 참조하세요.
-- `src/utils/omrEngine.ts`: 이미지 처리 및 채점 핵심 로직
-- `src/types.ts`: 엔진에서 사용하는 인터페이스 정의
+이 명령어는 저장소에 정의된 실행 방법이며, 이 문서 정리 작업에서 실제 실행한 테스트 결과를 뜻하지 않습니다.
 
-이 엔진은 외부 의존성이 없으므로 TypeScript 환경이라면 어디든 복사해서 즉시 사용할 수 있습니다.
+## 주요 코드
 
----
-**스마트 OMR 채점기** - 정확하고 빠른 웹 기반 채점 경험을 제공합니다.
+| 파일 | 역할 |
+|---|---|
+| [`src/utils/omrEngine.ts`](src/utils/omrEngine.ts) | 임계값 처리, 마커 탐색, 3점 정렬, 버블 채점 |
+| [`src/components/MappingCanvas.tsx`](src/components/MappingCanvas.tsx) | 템플릿 좌표 편집 |
+| [`src/components/AlignmentEditor.tsx`](src/components/AlignmentEditor.tsx) | 정렬·배치 편집 UI |
+| [`src/components/ResultsView.tsx`](src/components/ResultsView.tsx) | 채점 결과 화면 |
+| [`src/App.tsx`](src/App.tsx) | 앱 상태와 화면 흐름 |
+
+## 기술 스택
+
+React 19 · TypeScript · Vite · Tailwind CSS · HTML Canvas API
+
+## 후속 개선 후보
+
+- 실제 카메라 촬영본의 원근 왜곡에 대한 **4점 Homography** 지원
+- 마커 누락, 조명 변화, 다중 마킹 및 빈칸 사례를 포함하는 회귀 테스트
+- 정렬 실패 시 원본 이미지로 계속 채점하지 않도록 명시적 오류 처리
+
+이 저장소는 [autoomr](https://github.com/Transient-Onlooker/autoomr) 이후 개발한 버전입니다.
